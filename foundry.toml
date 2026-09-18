@@ -1,0 +1,29 @@
+[profile.default]
+src = "contracts"
+out = "out"
+libs = ["lib"]
+test = "test"
+solc = "0.8.24"
+optimizer = true
+via_ir = true
+optimizer_runs = 200
+remappings = ["entropy-sdk/=lib/entropy-sdk/", "forge-std/=lib/forge-std/src/", "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"]
+
+[fuzz]
+runs = 512
+
+# Kept modest so `forge test` stays instant; the whole point of this harness is that it can be
+# turned up on demand. Before shipping a contract change, run it deep:
+#   FOUNDRY_INVARIANT_RUNS=512 FOUNDRY_INVARIANT_DEPTH=256 forge test --match-path test/Invariants.t.sol
+# ⚠️ Those are ENV VARS because forge 1.7 has no --invariant-runs flag: it exits with a
+#    usage error, which is easy to read as "it ran".
+# fail_on_revert stays false because the handler feeds deliberately illegal input (out-of-range
+# betIds above all) — a revert there is the contract behaving, not the harness misfiring. What
+# guards against a vacuous run is afterInvariant(), which asserts the sequence actually did work.
+[invariant]
+runs = 64
+# ⚠️ Depth is not a knob to tune for speed. A bet needs to accumulate its way to roiTarget, so a
+# short sequence never reaches the states worth testing — at depth 64 nothing matured and nothing
+# was ever reserved.
+depth = 128
+fail_on_revert = false
