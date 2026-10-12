@@ -91,9 +91,12 @@ contract ConcurrentSalvations is Test {
             // call first PAYS the saved bet its roiTarget out of the pool, and only then snapshots
             // the base and claims the ceiling against what is left.
             uint256 base = game.jackpotOf(id) - _target(id, b);
+            // ⭐ The ceiling is claimed on the BOUNTY base, which leaves out the saviour bet's own stake
+            //    (CrazyGame._bountyBase); the pot itself only drops by the payout and that ceiling.
+            (, uint256 savNet,,,,,,,) = game.bets(id, s);
             game.reserveRoiWithSalvation{value: fee}(id, b, s);
             cursor = b + 1;
-            uint256 held = (base * game.INSANITY_MAX_BPS()) / 10_000;
+            uint256 held = ((base - savNet) * game.INSANITY_MAX_BPS()) / 10_000;
             assertEq(game.jackpotOf(id), base - held, "each pending salvation must hold its ceiling");
             emit log_named_uint("base available after open     ", game.jackpotOf(id));
         }

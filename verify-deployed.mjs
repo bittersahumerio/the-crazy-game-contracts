@@ -5,7 +5,8 @@
 // Everything that executes must be identical. Needs Node 18+ and nothing else.
 import { readFileSync } from 'node:fs';
 
-const [rpc, address = '0x003912feB558f0dFB687B57020fad10f47c6a27f'] = process.argv.slice(2);
+// v3, current since 2026-10-12. v2 is 0x003912feB558f0dFB687B57020fad10f47c6a27f: check out 65f2d34, `forge build`, and pass it as [address].
+const [rpc, address = '0x5d127e4aA215f86089Edd52D107c3dA83e3519e2'] = process.argv.slice(2);
 if (!rpc) {
   console.error('usage: node verify-deployed.mjs <rpc-url> [address]');
   process.exit(2);

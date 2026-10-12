@@ -388,8 +388,8 @@ contract CrazyGame is ReentrancyGuard {
         uint256 savedBetId;     // the matured bet that triggered this
         uint256 saviourBetId;   // who gets paid
         uint256 openedAt;       // anchors the window when no request ever went out
-        /// ⭐ jackpotOf at the moment the salvation was TRIGGERED, and it is snapshotted rather than
-        /// re-read for two independent reasons.
+        /// ⭐ The bounty base (_bountyBase: jackpotOf less the saviour's own stake) at the moment the
+        /// salvation was TRIGGERED, and it is snapshotted rather than re-read for two independent reasons.
         ///
         /// GAS: jackpotOf is O(betCount), and for mode 3 the rate arrives in the VRF callback, which
         /// runs under VRF_CALLBACK_GAS (200,000). Pricing there would cap a game at roughly 140 bets
@@ -1463,8 +1463,9 @@ contract CrazyGame is ReentrancyGuard {
         // ⭐ Priced off jackpotOf, NOT `poolBalance - reservedBalance` — that difference IS audit
         // finding #2. The raw slack still contains the ROI of every bet that matured before anyone
         // reserved it, so pricing against it paid away money that was already someone's. Same rule
-        // as the jackpot because it is now literally the same number.
-        uint256 bounty = (jackpotOf(gameId) * bps) / BPS;
+        // as the jackpot because it is now literally the same number — less the saviour's own stake
+        // (_bountyBase).
+        uint256 bounty = (_bountyBase(gameId, saviourBetId) * bps) / BPS;
         if (bounty > 0) {
             address saviour = bets[gameId][saviourBetId].player;
             g.salvadorCount += 1;
@@ -1492,6 +1493,24 @@ contract CrazyGame is ReentrancyGuard {
                 bets[gameId][saviourBetId].bountyOwed += bounty;
             }
         }
+    }
+
+    /**
+     * ⭐ THE POT A SALVATION IS PRICED ON: the jackpot WITHOUT THE SAVIOUR BET'S OWN STAKE, in every mode.
+     *
+     * The rule: a bounty is counted on the pot as it stood BEFORE the saviour's bet joined it. A saviour is
+     * never paid a share of their own money. Without it, one big bet inflates the pot and then takes a percentage of its own capital
+     * once for every bet it matures — measured on a realistic game (ratio 247, ROI 100%, a cohort of 60
+     * minimum bets, mode 1 at 300 bps): 90% of the pot drained, 36% with this (test/HarvestBase.t.sol).
+     *
+     * Consecutive salvations by the same saviour still take X% and then X% of what is left, because
+     * jackpotOf shrinks after each one.
+     * ⛔ No per-saviour cap: a salvation is meant to be worth taking.
+     */
+    function _bountyBase(uint256 gameId, uint256 saviourBetId) private view returns (uint256) {
+        uint256 j = jackpotOf(gameId);
+        uint256 own = bets[gameId][saviourBetId].netAmount;
+        return j > own ? j - own : 0;
     }
 
     // ─── Salvador mode 3 (Insanity) ──────────────────────────────────────────────────────────
@@ -1522,8 +1541,9 @@ contract CrazyGame is ReentrancyGuard {
     {
         Game storage g = games[gameId];
         uint256 sid = ++salvationCount;
-        // Read ONCE: jackpotOf is O(betCount) and this is the only place the base is established.
-        uint256 base = jackpotOf(gameId);
+        // Read ONCE: this is the only place the base is established. Without the saviour's own stake,
+        // exactly as modes 1 and 2 (_bountyBase).
+        uint256 base = _bountyBase(gameId, saviourBetId);
         salvations[sid] = PendingSalvation({
             gameId: gameId,
             savedBetId: savedBetId,

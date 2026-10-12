@@ -395,6 +395,12 @@ contract CrazyGameTest is Test {
         revert("no saviour: bet has not matured");
     }
 
+    /// A bet's net stake. ⭐ Every bounty is priced WITHOUT the saviour bet's own (CrazyGame._bountyBase,
+    /// test/HarvestBase.t.sol): the expected amounts below subtract it.
+    function _netOf(uint256 id, uint256 betId) internal view returns (uint256 n) {
+        (, n,,,,,,,) = game.bets(id, betId);
+    }
+
     function _salvadorGame(uint16 mode, uint16 bps, uint16 step, uint16 cap) internal returns (uint256 id) {
         vm.prank(host);
         id = game.createGame(address(tok), DEPOSIT, MIN_BET, 10_000, 100, 0, 3600, 0, [mode, bps, step, cap]);
@@ -422,10 +428,10 @@ contract CrazyGameTest is Test {
         // subtracted matured-but-unpaid ROI itself, so this line dropped the subtraction; auto-payout
         // made that unnecessary (the money leaves the pool instead of being accounted around), so the
         // base is once again the pot BEFORE the salvation pays the matured bet out of it.
-        uint256 expected = ((game.jackpotOf(id) - roiTarget) * 200) / 10_000;
+        uint256 expected = ((game.jackpotOf(id) - roiTarget - _netOf(id, saviour)) * 200) / 10_000;
 
         uint256 paidOut = _salvage(IERC20(address(tok)), id, a, saviour);
-        assertEq(paidOut, expected, "fixed-mode bounty must be exactly bps of the unreserved pool");
+        assertEq(paidOut, expected, "fixed-mode bounty must be exactly bps of the pot without the saviour's stake");
         // ⭐ And in mode 1 it must have been PAID, not merely credited — nothing left to claim.
         assertEq(_bountyOf(id, saviour), 0, "a mode-1 bounty is transferred, not left owing");
         _assertSolvent(id);
@@ -516,7 +522,7 @@ contract CrazyGameTest is Test {
             _runUntilMatured(id, b);
             uint256 sav = _findSaviour(id, b);
             (,, uint256 tgt2,,,,,,) = game.bets(id, b);
-            uint256 unreservedAfter = game.jackpotOf(id) - tgt2;
+            uint256 unreservedAfter = game.jackpotOf(id) - tgt2 - _netOf(id, sav);
             rates[k] = (_salvage(IERC20(address(tok)), id, b, sav) * 10_000) / unreservedAfter;
             _assertSolvent(id);
         }
@@ -571,8 +577,9 @@ contract CrazyGameTest is Test {
         // jackpotOf AFTER the saved bet has been paid out (so the base is lower by its roiTarget) but
         // BEFORE the pending ceiling is claimed (so reading afterwards returns roughly half). Compute
         // it rather than sample it.
+        // And without the saviour bet's own stake (_bountyBase).
         (,, uint256 savedTarget,,,,,,) = game.bets(id, betId);
-        unreserved = game.jackpotOf(id) - savedTarget;
+        unreserved = game.jackpotOf(id) - savedTarget - _netOf(id, saviour);
         vm.deal(alice, 1 ether);
         vm.prank(alice);
         game.reserveRoiWithSalvation{value: fee}(id, betId, saviour);
@@ -671,16 +678,18 @@ contract CrazyGameTest is Test {
         // pending salvation holds its own ceiling out of what remains — until a rate arrives,
         // INSANITY_MAX_BPS of the base is spoken for, which is what stops two salvations opened
         // together from spending the same money twice.
-        uint256 baseAtOpen = jackpotBefore - target;
+        // The base leaves out the saviour bet's own stake (_bountyBase); the pot itself does not.
+        uint256 potAfterPayout = jackpotBefore - target;
+        uint256 baseAtOpen = potAfterPayout - _netOf(id, _findSaviour(id, a));
         uint256 ceiling = (baseAtOpen * game.INSANITY_MAX_BPS()) / 10_000;
-        assertEq(game.jackpotOf(id), baseAtOpen - ceiling, "the pending ceiling must be held out");
+        assertEq(game.jackpotOf(id), potAfterPayout - ceiling, "the pending ceiling must be held out");
 
         // ...and handed back when the salvation resolves. Roll the smallest band so almost all of
         // the ceiling is released rather than spent.
         oracle.fulfill(1, 0);   // 20 bps
         uint256 paid = _bountyOf(id, _findSaviour(id, a));
         assertEq(paid, (baseAtOpen * 20) / 10_000, "and the rate applies to the base at trigger");
-        assertEq(game.jackpotOf(id), baseAtOpen - paid, "the unspent ceiling must come back");
+        assertEq(game.jackpotOf(id), potAfterPayout - paid, "the unspent ceiling must come back");
         _assertSolvent(id);
     }
 
@@ -1026,7 +1035,7 @@ contract CrazyGameTest is Test {
         (,,,,,, bool isReserved,,) = game.bets(id, a);
         assertTrue(isReserved, "precondition: the bet is already reserved");
 
-        uint256 unreserved = game.jackpotOf(id);
+        uint256 unreserved = game.jackpotOf(id) - _netOf(id, saviour);
         // pre-fix this reverted AlreadyDone; the bounty is now also PAID here rather than credited,
         // so measure it the way that works on both routes.
         uint256 paidOut = _salvage(IERC20(address(tok)), id, a, saviour);
@@ -1064,7 +1073,7 @@ contract CrazyGameTest is Test {
         vm.prank(alice);
         game.withdraw(id, a);           // the cheapest path, and the one alice actually wants
 
-        uint256 unreserved = game.jackpotOf(id);
+        uint256 unreserved = game.jackpotOf(id) - _netOf(id, saviour);
         uint256 paidOut = _salvage(IERC20(address(tok)), id, a, saviour);
         assertEq(paidOut, (unreserved * 200) / 10_000, "saviour keeps their bounty");
         assertEq(_bountyOf(id, saviour), 0, "and in mode 1 it is transferred, not left owing");
